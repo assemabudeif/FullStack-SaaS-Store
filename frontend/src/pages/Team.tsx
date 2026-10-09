@@ -1,0 +1,25 @@
+import { useState, type FormEvent } from 'react';
+import { Plus, ShieldCheck, Trash2, UsersRound } from 'lucide-react';
+import { useAction, useApi, usePermissions, useSession } from '../lib/hooks';
+import type { List, Member } from '../types';
+import { date, initials } from '../lib/utils';
+import { Badge, Button, Confirm, Field, FormFooter, Modal, PageHeader, Panel, QueryState } from '../components/ui';
+
+export default function Team() {
+  const query = useApi<List<Member>>('/members'), permissions = usePermissions(), session = useSession(), action = useAction('Team updated.');
+  const [add, setAdd] = useState(false), [remove, setRemove] = useState<Member | null>(null);
+  const members = query.data?.data ?? [];
+  return <><PageHeader eyebrow="BETTER, TOGETHER" title="Team members" description="Good business starts with good people. Bring yours together." actions={permissions.owner ? <Button onClick={() => setAdd(true)}><Plus size={17} />Add member</Button> : undefined} /><div className="team-info"><ShieldCheck size={23} /><div><strong>The right access, for the right people.</strong><p>Owners manage the team. Admins manage the store. Staff keep orders moving. Viewers stay in the loop.</p></div><Badge tone="green">{members.length} members</Badge></div>
+    <Panel><QueryState query={query}><div className="table-scroll"><table><thead><tr><th>Team member</th><th>Role</th><th>Joined</th><th>Access</th><th /></tr></thead><tbody>{members.map((m, i) => <tr key={m.id}><td><div className="person-cell"><span className={`avatar color-${i % 4}`}>{initials(m.name)}</span><div><strong>{m.name} {m.id === session.user.id ? <small className="you-badge">You</small> : null}</strong><span className="cell-sub">{m.email}</span></div></div></td><td>{permissions.owner ? <select aria-label={`Role for ${m.name}`} className="role-select" value={m.role} disabled={action.isPending} onChange={(e) => {
+      if (m.id === session.user.id && e.target.value !== 'owner' && !window.confirm('This changes your own access. Continue?')) return;
+      action.mutate({ path: `/members/${m.id}`, method: 'PATCH', body: { role: e.target.value } });
+    }}>{['owner', 'admin', 'staff', 'viewer'].map((role) => <option key={role} value={role}>{role}</option>)}</select> : <Badge tone={m.role === 'owner' ? 'green' : 'neutral'}>{m.role}</Badge>}</td><td>{date(m.created_at)}</td><td><span className="stock-count"><span />Active member</span></td><td>{permissions.owner ? <button className="icon-button" aria-label={`Remove ${m.name}`} disabled={m.role === 'owner' && members.filter((p) => p.role === 'owner').length === 1} onClick={() => setRemove(m)}><Trash2 size={15} /></button> : null}</td></tr>)}</tbody></table></div></QueryState></Panel>
+    <div className="team-role-grid">{[['owner', 'The big picture', 'Full access, including team roles and sandbox plans.'], ['admin', 'The store, in hand', 'Catalog, coupons, settings, analytics and audit access.'], ['staff', 'Keep things moving', 'Products, customers, inventory and order management.'], ['viewer', 'Stay in the loop', 'Read-only access to catalog, customers and orders.']].map(([role, title, desc]) => <div className="panel role-card" key={role}><span className="role-icon"><UsersRound size={18} /></span><Badge>{role}</Badge><h3>{title}</h3><p>{desc}</p></div>)}</div>
+    {add ? <MemberForm onClose={() => setAdd(false)} /> : null}{remove ? <Confirm title={`Remove ${remove.name}?`} description="Their store access is revoked immediately. They can still access other stores they belong to." pending={action.isPending} onClose={() => setRemove(null)} onConfirm={() => action.mutate({ path: `/members/${remove.id}`, method: 'DELETE' }, { onSuccess: () => setRemove(null) })} /> : null}
+  </>;
+}
+function MemberForm({ onClose }: { onClose: () => void }) {
+  const action = useAction('Team member added.'), session = useSession();
+  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const f = new FormData(event.currentTarget); action.mutate({ path: '/members', body: { email: f.get('email'), role: f.get('role') } }, { onSuccess: onClose }); }
+  return <Modal title="Make room for your people." description={session.mode === 'demo' ? 'Demo accounts are local samples. No invitations are sent.' : 'Add an existing registered account by email. No invitation email is sent.'} onClose={onClose}><form className="form-body" onSubmit={submit}><Field label="Email address"><input name="email" type="email" required maxLength={254} placeholder="teammate@example.com" /></Field><Field label="Store role"><select name="role" defaultValue="staff"><option value="admin">Admin · manage the store</option><option value="staff">Staff · handle daily operations</option><option value="viewer">Viewer · read-only access</option></select></Field><div className="help-note">The backend requires a registered account before membership can be granted. The interactive demo accepts sample emails.</div><FormFooter pending={action.isPending} onClose={onClose} label="Add to team" /></form></Modal>;
+}
