@@ -94,7 +94,7 @@ CREATE TABLE audit_logs (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX audit_tenant_idx ON audit_logs(tenant_id,created_at DESC);
-`,
+`
 }, {
   version: 2,
   sql: `
@@ -111,7 +111,110 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paymob_api_key text;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paymob_integration_id integer;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paymob_iframe_id integer;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paymob_hmac text;
-`,
+`
+}, {
+  version: 3,
+  sql: `
+CREATE TABLE product_options (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  name text NOT NULL, position integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(tenant_id,id), UNIQUE(tenant_id,name)
+);
+CREATE TABLE product_option_values (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  option_id uuid NOT NULL REFERENCES product_options(id) ON DELETE CASCADE,
+  value text NOT NULL, position integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(tenant_id,id), UNIQUE(tenant_id,option_id,value)
+);
+CREATE TABLE product_variants (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  sku text NOT NULL, price_cents_integer_adjustment integer NOT NULL DEFAULT 0,
+  stock_adjustment integer NOT NULL DEFAULT 0,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(tenant_id,id), UNIQUE(tenant_id,sku),
+  FOREIGN KEY (tenant_id,product_id) REFERENCES products(tenant_id,id)
+);
+CREATE TABLE product_variant_options (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  variant_id uuid NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
+  option_id uuid NOT NULL REFERENCES product_options(id),
+  option_value_id uuid NOT NULL REFERENCES product_option_values(id),
+  UNIQUE(tenant_id,id), UNIQUE(tenant_id,variant_id,option_id),
+  FOREIGN KEY (tenant_id,variant_id) REFERENCES product_variants(tenant_id,id)
+);
+-- Indexes for better query performance
+CREATE INDEX product_options_tenant_idx ON product_options(tenant_id);
+CREATE INDEX product_option_values_tenant_idx ON product_option_values(tenant_id);
+CREATE INDEX product_variants_tenant_idx ON product_variants(tenant_id);
+CREATE INDEX product_variant_options_tenant_idx ON product_variant_options(tenant_id);
+`
+}, {
+  version: 4,
+  sql: `
+CREATE TABLE wishlists (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  customer_id uuid NOT NULL REFERENCES customers(id),
+  name text NOT NULL DEFAULT 'مفضلاتي',
+  is_default boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(tenant_id,id),
+  UNIQUE(tenant_id,customer_id,is_default),
+  FOREIGN KEY (tenant_id,customer_id) REFERENCES customers(tenant_id,id)
+);
+CREATE UNIQUE INDEX wishlists_customer_default_idx ON wishlists(tenant_id, customer_id) WHERE is_default=true;
+CREATE TABLE wishlist_items (
+  id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES tenants(id),
+  wishlist_id uuid NOT NULL REFERENCES wishlists(id) ON DELETE CASCADE,
+  product_id uuid NOT NULL,
+  variant_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(tenant_id,id),
+  UNIQUE(tenant_id,wishlist_id,product_id,variant_id),
+  FOREIGN KEY (tenant_id,product_id) REFERENCES products(tenant_id,id),
+  FOREIGN KEY (tenant_id,variant_id) REFERENCES product_variants(tenant_id,id)
+);
+-- Indexes for better query performance
+CREATE INDEX wishlists_tenant_idx ON wishlists(tenant_id);
+CREATE INDEX wishlists_customer_idx ON wishlists(tenant_id,customer_id);
+CREATE INDEX wishlist_items_tenant_idx ON wishlist_items(tenant_id);
+CREATE INDEX wishlist_items_wishlist_idx ON wishlist_items(tenant_id,wishlist_id);
+CREATE INDEX wishlist_items_product_idx ON wishlist_items(tenant_id,product_id);
+`
+}, {
+  version: 5,
+  sql: `
+CREATE TABLE product_reviews (
+  id uuid PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  customer_id uuid NOT NULL REFERENCES customers(id),
+  rating integer NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  title text NOT NULL,
+  comment text,
+  is_verified_purchase boolean NOT NULL DEFAULT false,
+  helpful_votes integer NOT NULL DEFAULT 0,
+  total_votes integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(tenant_id,id),
+  UNIQUE(tenant_id,product_id,customer_id) -- منع التقييم المتكرر لنفس المنتج من نفس العميل
+);
+
+CREATE TABLE review_votes (
+  id uuid PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  review_id uuid NOT NULL REFERENCES product_reviews(id) ON DELETE CASCADE,
+  customer_id uuid NOT NULL REFERENCES customers(id),
+  vote_type text NOT NULL CHECK (vote_type IN ('helpful', 'not_helpful')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(tenant_id,id),
+  UNIQUE(tenant_id,review_id,customer_id,vote_type)
+);
+`
 }];
 
 export async function migrate(db: Database): Promise<void> {

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>تم شحن الطلب</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #2196F3; color: white; padding: 20px; text-align: center; }
+    .content { padding: 20px; }
+    .footer { background-color: #f2f2f2; padding: 15px; text-align: center; font-size: 0.9em; color: #666; }
+    .tracking-info { background-color: #e3f2fd; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 4px solid #2196F3; }
+    .button { display: inline-block; background-color: #2196F3; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>تم شحن طلبك</h1>
+    <p>طلبك في الطريق إليك!</p>
+  </div>
+  <div class="content">
+    <p>مرحباً {{name}},</p>
+    <p>سررنا بإبلاغك أن طلبك قد تم شحنته وهو الآن في الطريق إليك. فيما يلي تفاصيل الشحن:</p>
+    
+    <div class="tracking-info">
+      <h2>تفاصيل الشحن</h2>
+      <p><strong>رقم الطلب:</strong> {{orderId}}</p>
+      <p><strong>رقم التتبع:</strong> {{trackingNumber}}</p>
+      <p><strong>الشركة الناقلة:</strong> {{carrier}}</p>
+      {{#if estimatedDelivery}}
+      <p><strong>تاريخ التسليم المتوقع:</strong> {{estimatedDelivery}}</p>
+      {{/if}}
+    </div>
+    
+    <p>يمكنك تتبع شحنتك باستخدام رقم التتبع المقدم أعلاه على موقع الشركة الناقلة.</p>
+    
+    <p>شكرًا لتسوقك معنا!</p>
+    
+    <a href="{{storeUrl}}/orders/{{orderId}}" class="button">عرض الطلب</a>
+  </div>
+  
+  <div class="footer">
+    <p>هذا البريد الإلكتروني تم إرساله تلقائيًا، يرجى عدم الرد عليه.</p>
+    <p>&copy; {{currentYear}} المتجر. جميع الحقوق محفوظة.</p>
+  </div>
+</body>
+</html>

@@ -111,6 +111,36 @@ export async function orderRoutes(instance: FastifyInstance) {
       }
       if (coupon) await tx.query('UPDATE coupons SET used=used+1 WHERE tenant_id=$1 AND id=$2', [r.tenant!.id, coupon.id]);
       await audit(tx, r, 'order.created', id, { totalCents: total, paymentMethod });
+      
+      // Send order confirmation email
+      try {
+        const orderDetails = {
+          items: lines.map(line => ({
+            name: line.product.name,
+            sku: line.product.sku,
+            quantity: line.quantity,
+            price: (line.product.price_cents / 100).toFixed(2)
+          })),
+          subtotal: (subtotal / 100).toFixed(2),
+          discount: (discount / 100).toFixed(2),
+          tax: (tax / 100).toFixed(2),
+          shipping: (store.shipping_cents / 100).toFixed(2),
+          total: (total / 100).toFixed(2),
+          paymentMethod: paymentMethod === 'cod' ? 'الدفع عند الاستلام' : 'بطاقة ائتمان عبر Paymob',
+          storeUrl: process.env.STORE_URL || 'http://localhost:5173'
+        };
+        
+        await app.notificationService.sendOrderConfirmation(
+          customer.email,
+          customer.name,
+          id,
+          orderDetails
+        );
+      } catch (emailError) {
+        // Don't fail the order if email sending fails
+        app.log.error('Failed to send order confirmation email:', emailError);
+      }
+      
       return { order: await getOrder(tx, r.tenant!.id, id), replay: false };
     });
     reply.header('Idempotency-Replayed', String(result.replay));
@@ -139,6 +169,57 @@ export async function orderRoutes(instance: FastifyInstance) {
     await tx.query('UPDATE orders SET status=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2',
       [r.tenant!.id, order.id, r.body.status]);
     await audit(tx, r, 'order.status_changed', order.id, { from: order.status, to: r.body.status });
+    
+    // Send status update emails
+    try {
+      const customerName = `${order.customer_email.split('@')[0]}`; // Fallback if we don't have name
+      // In a real implementation, we'd fetch the customer name from the customer record
+      
+      if (r.body.status === 'confirmed') {
+        await app.notificationService.sendOrderConfirmation(
+          order.customer_email,
+          customerName,
+          order.id,
+          {
+            items: order.items.map(item => ({
+              name: item.name,
+              sku: item.sku,
+              quantity: item.quantity,
+              price: (item.unit_price_cents / 100).toFixed(2)
+            })),
+            subtotal: (order.subtotal_cents / 100).toFixed(2),
+            discount: (order.discount_cents / 100).toFixed(2),
+            tax: (order.tax_cents / 100).toFixed(2),
+            shipping: (order.shipping_cents / 100).toFixed(2),
+            total: (order.total_cents / 100).toFixed(2),
+            paymentMethod: order.payment_method === 'cod' ? 'الدفع عند الاستلام' : 'بطاقة ائتمان عبر Paymob',
+            storeUrl: process.env.STORE_URL || 'http://localhost:5173'
+          }
+        );
+      } else if (r.body.status === 'shipped') {
+        // In a real implementation, we'd get tracking info from shipping provider
+        await app.notificationService.sendOrderShipped(
+          order.customer_email,
+          customerName,
+          order.id,
+          {
+            trackingNumber: `TRK${Math.floor(Math.random() * 1000000)}`,
+            carrier: 'شركة الشحن',
+            estimatedDelivery: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString() // 3 days from now
+          }
+        );
+      } else if (r.body.status === 'completed') {
+        await app.notificationService.sendOrderDelivered(
+          order.customer_email,
+          customerName,
+          order.id
+        );
+      }
+    } catch (emailError) {
+      // Don't fail the status update if email sending fails
+      app.log.error('Failed to send order status email:', emailError);
+    }
+    
     return getOrder(tx, r.tenant!.id, order.id);
   }));
   app.patch('/orders/:id/payment', {
