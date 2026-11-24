@@ -1,6 +1,10 @@
-# Advanced Store — SaaS Backend
+# Advanced Store — Multi-Tenant Store Starter
 
-A runnable, API-only Node.js application for managing multiple stores. Built with **TypeScript, Fastify, PostgreSQL, and SQL migrations**. Local development uses persistent embedded PostgreSQL (PGlite); production uses PostgreSQL through `pg`.
+An early-stage full-stack application for managing multiple stores. The API uses **TypeScript, Fastify, PostgreSQL, and SQL migrations**; the web app uses **React and Vite**. Local development uses persistent embedded PostgreSQL (PGlite); production uses PostgreSQL through `pg`.
+
+> **Status:** Work in progress. This is a development starter, not a production-ready commerce service. Review the production checklist below before handling real orders or customer data.
+>
+> **License:** Project code, documentation, and original demo images use MIT. See `ASSET_LICENSES.md` for external image references.
 
 ## Included
 
@@ -13,7 +17,7 @@ A runnable, API-only Node.js application for managing multiple stores. Built wit
 - **Customer Storefront & Checkout**: Category filtering, search, cart drawer, coupons, customer info, delivery address, order creation without staff authentication.
 - **Payment Gateways**:
   - **Cash on Delivery (COD)**: zero-setup local collection with staff "Mark as Paid" fulfillment.
-  - **Paymob Gateway**: Full token auth, order registration, payment key request, iframe integration, HMAC SHA-512 webhook verification, plus an interactive built-in simulation fallback for offline local testing.
+  - **Paymob Gateway**: token auth, order registration, payment-key requests, iframe checkout, HMAC SHA-512 webhook verification with amount/currency/reference checks, and a development-only simulation path.
 - **Modern & Creative Web UI**: High-end React 19 + Vite dashboard & customer storefront featuring dark/light modes, glassmorphism, responsive navigation, payment cards, and order tracking steppers.
 - Cancellation restores stock and coupon availability exactly once.
 - Free/pro/business plan limits; usage reports; **opt-in development-only sandbox plan changes**.
@@ -24,7 +28,7 @@ A runnable, API-only Node.js application for managing multiple stores. Built wit
 ## Quick start (Node.js 24+)
 
 ```sh
-npm install
+npm ci
 npm run setup        # creates .env with random secrets; never overwrites it
 npm run dev          # starts Fastify backend on http://127.0.0.1:3000
 ```
@@ -89,7 +93,7 @@ All routes below are under `/api/v1`. Consult `/docs` for request schemas. Reque
 | Analytics | `GET /analytics/summary` | Admin+ |
 | Audit | `GET /audit-logs` | Admin+ |
 | Public Storefront | `GET /storefront/:slug/categories`, `GET /storefront/:slug/products`, `POST /storefront/:slug/checkout`, `GET /storefront/:slug/orders/:id` | Public (Customers) |
-| Payments | `POST /payments/paymob/webhook`, `POST /payments/paymob/mock-pay` | Public / Gateway Webhooks |
+| Payments | `POST /payments/paymob/webhook`, `POST /payments/paymob/mock-pay` | Signed public webhook / development-only simulator |
 
 Private store routes require **both** `Authorization: Bearer ...` and `X-Tenant-ID: <uuid>`. No membership yields 404 instead of exposing private store existence. Add team members by the email of an already registered account. Membership grants access; this implementation does not send invitations.
 
@@ -178,14 +182,14 @@ tests/                integration tests
 
 ## Before a real production launch
 
-This is a working backend foundation, not a claim of a fully operated commerce service. The following are intentionally **not** simulated as production functionality:
+This is a working application foundation, not a claim of a fully operated commerce service. The following are intentionally **not** simulated as production functionality:
 
-- Payment collection, refunds, paid SaaS billing and verified payment-provider webhooks.
-- Password reset/email verification, invitation delivery, MFA and customer-facing authentication.
-- Product variants, images/file uploads, shopping carts, return processing, carrier shipping quotes and jurisdiction-specific tax compliance.
-- Background jobs, webhook retries/outbox, observability dashboards, backups and disaster recovery.
+- Paid SaaS billing, password reset/email verification, invitation delivery, and MFA.
+- Full production payment operations, including provider onboarding, webhook retries, refunds, settlement and reconciliation.
+- Product variants, image/file uploads, persistent shopping carts, returns, carrier shipping quotes and jurisdiction-specific tax compliance.
+- Background jobs, observability dashboards, backups and disaster recovery.
 
-Integrate those services as required. Completed-order sales are **not verified payment receipts**. The public API currently exposes catalog browsing only; checkout/order creation is for authenticated store staff.
+Integrate these services as required before launch. Completed-order sales are **not verified payment receipts**. Public storefront routes support catalog browsing, checkout, and order tracking. Tracking exposes order status, totals, and line items only; it does not verify the customer's identity.
 
 Additional deployment work: enforce TLS at the proxy, establish secret rotation and database backups, apply retention/privacy policies to customer and audit data, restrict docs if needed, use shared rate-limit storage for multiple API instances, and configure trusted proxy addresses explicitly (do not blindly trust forwarded IPs). Current rate limits are in-process (120 requests/minute/IP globally, 10/minute/IP for sensitive auth routes). Use a production migration role, a restricted runtime role and external monitoring.
 

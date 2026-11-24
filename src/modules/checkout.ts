@@ -106,6 +106,16 @@ export async function checkoutRoutes(instance: FastifyInstance) {
   }, async (r, reply) => {
     const [store] = await app.db.query('SELECT * FROM tenants WHERE slug=$1', [r.params.slug]);
     if (!store) notFound('Store');
+    const paymobConfig = {
+      apiKey: store.paymob_api_key || app.config.paymobApiKey,
+      integrationId: store.paymob_integration_id || app.config.paymobIntegrationId,
+      iframeId: store.paymob_iframe_id || app.config.paymobIframeId,
+      hmacSecret: store.paymob_hmac || app.config.paymobHmac,
+    };
+    if (r.body.paymentMethod === 'paymob' && app.config.nodeEnv === 'production' &&
+        (!paymobConfig.apiKey || !paymobConfig.integrationId || !paymobConfig.hmacSecret)) {
+      throw new ApiError(503, 'PAYMENT_PROVIDER_UNAVAILABLE', 'Paymob is not fully configured.');
+    }
 
     const items = [...r.body.items].sort((a, b) => a.productId.localeCompare(b.productId));
     if (new Set(items.map((i) => i.productId)).size !== items.length) {
@@ -264,13 +274,6 @@ export async function checkoutRoutes(instance: FastifyInstance) {
     let paymentData: Record<string, any> = { method: r.body.paymentMethod };
 
     if (r.body.paymentMethod === 'paymob') {
-      const paymobConfig = {
-        apiKey: store.paymob_api_key || app.config.paymobApiKey,
-        integrationId: store.paymob_integration_id || app.config.paymobIntegrationId,
-        iframeId: store.paymob_iframe_id || app.config.paymobIframeId,
-        hmacSecret: store.paymob_hmac || app.config.paymobHmac,
-      };
-
       const paymobSession = await createPaymobPaymentSession(paymobConfig, {
         amountCents: order.total_cents,
         currency: order.currency,
@@ -284,7 +287,7 @@ export async function checkoutRoutes(instance: FastifyInstance) {
           country: r.body.shippingAddress.country,
         },
         slug: store.slug,
-      });
+      }, { allowSimulation: app.config.nodeEnv !== 'production' });
 
       // Save payment reference
       await app.db.query(
@@ -326,7 +329,23 @@ export async function checkoutRoutes(instance: FastifyInstance) {
     const [store] = await app.db.query('SELECT id, name, slug, currency FROM tenants WHERE slug=$1', [r.params.slug]);
     if (!store) notFound('Store');
     const order = await getOrderDetails(app.db, store.id, r.params.id);
-    return { store, order };
+    return {
+      store,
+      order: {
+        id: order.id,
+        status: order.status,
+        payment_status: order.payment_status,
+        payment_method: order.payment_method,
+        currency: order.currency,
+        created_at: order.created_at,
+        subtotal_cents: order.subtotal_cents,
+        discount_cents: order.discount_cents,
+        tax_cents: order.tax_cents,
+        shipping_cents: order.shipping_cents,
+        total_cents: order.total_cents,
+        items: order.items.map(({ name, sku, quantity, unit_price_cents }) => ({ name, sku, quantity, unit_price_cents })),
+      },
+    };
   });
 
   // 5. Paymob Webhook / Callback Handler
@@ -348,15 +367,24 @@ export async function checkoutRoutes(instance: FastifyInstance) {
     const [store] = await app.db.query('SELECT paymob_hmac FROM tenants WHERE id=$1', [order.tenant_id]);
     const hmacSecret = store?.paymob_hmac || app.config.paymobHmac;
 
-    if (hmacSecret && !verifyPaymobHmac(obj, hmacSecret)) {
+    if (!hmacSecret) {
+      return reply.code(503).send({ error: 'Paymob webhook HMAC is not configured' });
+    }
+    if (!verifyPaymobHmac(obj, hmacSecret)) {
       return reply.code(400).send({ error: 'Invalid HMAC signature' });
+    }
+    if (order.payment_method !== 'paymob' || !order.payment_reference ||
+        Number(obj.amount_cents) !== Number(order.total_cents) ||
+        String(obj.currency) !== String(order.currency) ||
+        String(obj.order?.id) !== String(order.payment_reference)) {
+      return reply.code(400).send({ error: 'Payment details do not match the order' });
     }
 
     if (success) {
       await app.db.query(
         `UPDATE orders SET payment_status='paid', status=CASE WHEN status='pending' THEN 'confirmed' ELSE status END,
-         payment_reference=$2, updated_at=now() WHERE id=$1`,
-        [order.id, String(obj.id || 'paymob_webhook')],
+         updated_at=now() WHERE id=$1`,
+        [order.id],
       );
     }
 
@@ -374,15 +402,18 @@ export async function checkoutRoutes(instance: FastifyInstance) {
       }),
     },
   }, async (r) => {
+    if (app.config.nodeEnv === 'production') notFound('Payment simulator');
     const [order] = await app.db.query('SELECT * FROM orders WHERE id=$1', [r.body.orderId]);
     if (!order) notFound('Order');
+    if (order.payment_method !== 'paymob' || !String(order.payment_reference ?? '').startsWith('pm_ord_')) {
+      notFound('Simulated payment');
+    }
 
     if (r.body.success) {
-      const txId = r.body.transactionId || `sim_pm_${Math.random().toString(36).substring(2, 10)}`;
       await app.db.query(
         `UPDATE orders SET payment_status='paid', status=CASE WHEN status='pending' THEN 'confirmed' ELSE status END,
-         payment_reference=$2, updated_at=now() WHERE id=$1`,
-        [order.id, txId],
+         updated_at=now() WHERE id=$1`,
+        [order.id],
       );
     }
 
