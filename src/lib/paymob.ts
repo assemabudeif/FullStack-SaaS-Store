@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export interface PaymobConfig {
   apiKey?: string;
@@ -35,6 +35,7 @@ export interface PaymobInitResult {
 export async function createPaymobPaymentSession(
   config: PaymobConfig,
   params: PaymobOrderParams,
+  options: { allowSimulation?: boolean } = {},
 ): Promise<PaymobInitResult> {
   const apiKey = config.apiKey?.trim();
   const integrationId = config.integrationId;
@@ -117,9 +118,15 @@ export async function createPaymobPaymentSession(
         isSimulated: false,
       };
     } catch (error) {
-      // If network call fails or invalid test key, fallback to interactive simulator with note
+      if (options.allowSimulation === false) {
+        throw new Error('Paymob is unavailable; payment simulation is disabled.');
+      }
       console.warn('Paymob API call encountered an error, falling back to simulator:', error);
     }
+  }
+
+  if (options.allowSimulation === false) {
+    throw new Error('Paymob is not configured; payment simulation is disabled.');
   }
 
   // Interactive simulated gateway mode for local development, instant testing, and showcase
@@ -137,7 +144,7 @@ export async function createPaymobPaymentSession(
 }
 
 export function verifyPaymobHmac(data: Record<string, any>, hmacSecret: string): boolean {
-  if (!hmacSecret) return true;
+  if (!hmacSecret) return false;
   // Standard Paymob HMAC fields concatenation
   const fields = [
     'amount_cents',
@@ -174,5 +181,6 @@ export function verifyPaymobHmac(data: Record<string, any>, hmacSecret: string):
 
   const expected = createHmac('sha512', hmacSecret).update(concatenated).digest('hex');
   const received = data.hmac || data.HMAC;
-  return expected.toLowerCase() === String(received).toLowerCase();
+  if (typeof received !== 'string' || !/^[a-f0-9]{128}$/i.test(received)) return false;
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(received, 'hex'));
 }
